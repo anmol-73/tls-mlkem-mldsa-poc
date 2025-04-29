@@ -1,3 +1,4 @@
+#include <cstdint>
 #include <oqs/oqs.h>
 #include <openssl/evp.h>
 #include <openssl/ec.h>
@@ -7,7 +8,7 @@
 #include <openssl/kdf.h>
 #include <openssl/params.h>
 #include <curl/curl.h>
-#include "json.hpp"
+#include <nlohmann/json.hpp>
 #include <vector>
 #include <string>
 #include <iostream>
@@ -151,6 +152,62 @@ bool post_key_exchange(const std::string& url, const json& req_json, json& resp_
     }
 }
 
+// --- Load or generate MLDSA private key ---
+void load_server_mldsa_key(std::vector<uint8_t>& pub_key) {
+    OQS_SIG *sig = OQS_SIG_new(OQS_SIG_alg_ml_dsa_65);
+    if (!sig) throw std::runtime_error("Failed to create MLDSA object");
+
+    // Load server's MLDSA public key from disk (example)
+    FILE *fp = fopen("server_mldsa_pub.bin", "rb");
+    if (!fp) throw std::runtime_error("Failed to open server MLDSA public key file");
+    pub_key.resize(sig->length_public_key);
+    fread(pub_key.data(), 1, pub_key.size(), fp);
+    fclose(fp);
+    std::cout << "[+] Loaded server MLDSA public key\n";
+    OQS_SIG_free(sig);
+}
+
+void load_server_ecdsa_key(EVP_PKEY* &priv_key) {
+    FILE* fp = fopen("server_ecdsa_pub.pem", "r");
+    if (!fp) throw std::runtime_error("Failed to open server ECDSA private key file");
+    priv_key = PEM_read_PUBKEY(fp, nullptr, nullptr, nullptr);
+    fclose(fp);
+}
+
+bool ecdsa_verify(EVP_PKEY* pubkey, const std::vector<uint8_t>& message, const std::vector<uint8_t>& signature) {
+    EVP_MD_CTX* mdctx = EVP_MD_CTX_new();
+    if (!mdctx) throw std::runtime_error("MD context alloc failed");
+
+    if (EVP_DigestVerifyInit(mdctx, nullptr, EVP_sha256(), nullptr, pubkey) <= 0)
+        throw std::runtime_error("DigestVerifyInit failed");
+
+    if (EVP_DigestVerifyUpdate(mdctx, message.data(), message.size()) <= 0)
+        throw std::runtime_error("DigestVerifyUpdate failed");
+
+    int ret = EVP_DigestVerifyFinal(mdctx, signature.data(), signature.size());
+    EVP_MD_CTX_free(mdctx);
+    return ret == 1;
+}
+
+void verify_cert(const std::vector<uint8_t>& mldsa_pub_key, EVP_PKEY* pub_key,
+                 const std::vector<uint8_t>& mldsa_signature,
+                 const std::vector<uint8_t>& ecdsa_signature,
+                 const std::vector<uint8_t>& message) {
+    OQS_SIG *sig = OQS_SIG_new(OQS_SIG_alg_ml_dsa_65);
+    if (!sig) {
+        std::runtime_error("[-] Failed to create MLDSA object!\n");
+    }
+    OQS_STATUS rc = OQS_SIG_verify(sig,
+        message.data(), message.size(),
+        mldsa_signature.data(), mldsa_signature.size(),
+        mldsa_pub_key.data());
+    OQS_SIG_free(sig);
+    if (rc == OQS_SUCCESS && ecdsa_verify(pub_key, message, ecdsa_signature)) {
+        std::cout << "[+] Signature verified successfully!\n";
+    } else {
+        throw std::runtime_error("[!] Signature verification failed");
+    }
+}
 // Derive the shared secrets using ML-KEM decapsulation and ECDH key derivation.
 bool derive_secrets(OQS_KEM* kem,
                     const std::vector<uint8_t>& sk,
@@ -273,13 +330,17 @@ int main() {
     try {
         // Variables to hold ML-KEM, public/private keys for both ML-KEM and ECDH.
         OQS_KEM* kem = nullptr;
-        std::vector<uint8_t> pk, sk;
+        std::vector<uint8_t> pk, sk, server_mldsa_pub;
         EVP_PKEY* ecdh_priv = nullptr;
+        EVP_PKEY* ecdsa_pub = nullptr;
         std::string ecdh_pub_pem;
 
         // Generate ML-KEM and ECDH keypairs.
         if (!generate_mlkem(kem, pk, sk)) return 1;
         if (!generate_ecdh(ecdh_priv, ecdh_pub_pem)) return 1;
+
+        load_server_mldsa_key(server_mldsa_pub);
+        load_server_ecdsa_key(ecdsa_pub);
 
         // Prepare the JSON request containing both Base64-encoded public keys.
         json request = {
@@ -293,11 +354,14 @@ int main() {
 
         // Decode server response parameters (server's public key, encrypted key material, and AES-GCM parameters).
         std::vector<uint8_t> srv_ecdh_pub = b64_decode(response["server_ecdh_public_key"].get<std::string>());
+        std::vector<uint8_t> mldsa_signature = b64_decode(response["mldsa_signature"].get<std::string>());
+        std::vector<uint8_t> ecdsa_signature = b64_decode(response["ecdsa_signature"].get<std::string>());
         std::vector<uint8_t> ciphertext    = b64_decode(response["ciphertext"].get<std::string>());
         std::vector<uint8_t> iv            = b64_decode(response["iv"].get<std::string>());
         std::vector<uint8_t> tag           = b64_decode(response["tag"].get<std::string>());
         std::vector<uint8_t> encaps_key    = b64_decode(response["key"].get<std::string>());
 
+        verify_cert(server_mldsa_pub, ecdsa_pub, mldsa_signature, ecdsa_signature, srv_ecdh_pub);
         // Derive the shared secrets using ML-KEM and ECDH.
         std::vector<uint8_t> shared_mlkem, shared_ecdh;
         if (!derive_secrets(kem, sk, encaps_key, ecdh_priv, srv_ecdh_pub, shared_mlkem, shared_ecdh)) return 1;
