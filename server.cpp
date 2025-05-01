@@ -1,13 +1,13 @@
-#include "httplib.h"              // HTTP server library
+#include "httplib.h" // HTTP server library
 #include <cstdint>
-#include <nlohmann/json.hpp>             // JSON for Modern C++ (used for HTTP message parsing)
-#include <oqs/oqs.h>              // ML-KEM operations (from the liboqs C API)
+#include <nlohmann/json.hpp> // JSON for Modern C++ (used for HTTP message parsing)
+#include <oqs/oqs.h>         // ML-KEM operations (from the liboqs C API)
 #include <openssl/evp.h>
 #include <openssl/pem.h>
 #include <openssl/bio.h>
 #include <openssl/buffer.h>
 #include <openssl/kdf.h>
-#include <openssl/params.h>       // For constructing OCTET_STRING parameters
+#include <openssl/params.h> // For constructing OCTET_STRING parameters
 #include <oqs/sig.h>
 #include <vector>
 #include <string>
@@ -20,11 +20,12 @@ using json = nlohmann::json;
 
 // --- Base64 Helpers ---
 // Encode a byte vector into Base64 using OpenSSL BIOs.
-static std::string b64_encode(const std::vector<uint8_t>& in) {
+static std::string b64_encode(const std::vector<uint8_t> &in)
+{
     BIO *b64 = BIO_new(BIO_f_base64());
     BIO *bmem = BIO_new(BIO_s_mem());
     BIO_push(b64, bmem);
-    BIO_set_flags(b64, BIO_FLAGS_BASE64_NO_NL);  // Do not add newlines
+    BIO_set_flags(b64, BIO_FLAGS_BASE64_NO_NL); // Do not add newlines
     BIO_write(b64, in.data(), in.size());
     BIO_flush(b64);
     BUF_MEM *bptr;
@@ -35,7 +36,8 @@ static std::string b64_encode(const std::vector<uint8_t>& in) {
 }
 
 // Decode a Base64 string into a byte vector.
-static std::vector<uint8_t> b64_decode(const std::string& in) {
+static std::vector<uint8_t> b64_decode(const std::string &in)
+{
     BIO *b64 = BIO_new(BIO_f_base64());
     BIO *bmem = BIO_new_mem_buf(in.data(), in.size());
     BIO_push(b64, bmem);
@@ -50,7 +52,8 @@ static std::vector<uint8_t> b64_decode(const std::string& in) {
 // --- Generate Server ECDHE Keypair ---
 // Generates an EC keypair on the NIST P-256 curve and returns the private key.
 // The public key is output in PEM format (stored in server_ecdh_pub_pem).
-EVP_PKEY* generate_server_ecdh_keypair(std::vector<uint8_t>& server_ecdh_pub_pem) {
+EVP_PKEY *generate_server_ecdh_keypair(std::vector<uint8_t> &server_ecdh_pub_pem)
+{
     std::cout << "[+] Generating server ECDHE P-256 keypair\n";
     EVP_PKEY_CTX *pctx = EVP_PKEY_CTX_new_id(EVP_PKEY_EC, nullptr);
     if (!pctx)
@@ -79,13 +82,16 @@ EVP_PKEY* generate_server_ecdh_keypair(std::vector<uint8_t>& server_ecdh_pub_pem
 }
 
 // --- Load or generate MLDSA private key ---
-void load_server_mldsa_key(std::vector<uint8_t>& priv_key) {
+void load_server_mldsa_key(std::vector<uint8_t> &priv_key)
+{
     OQS_SIG *sig = OQS_SIG_new(OQS_SIG_alg_ml_dsa_65);
-    if (!sig) throw std::runtime_error("Failed to create MLDSA object");
+    if (!sig)
+        throw std::runtime_error("Failed to create MLDSA object");
 
     // Load server's MLDSA private key from disk (example)
     FILE *fp = fopen("server_mldsa_priv.bin", "rb");
-    if (!fp) throw std::runtime_error("Failed to open server MLDSA private key file");
+    if (!fp)
+        throw std::runtime_error("Failed to open server MLDSA private key file");
     priv_key.resize(sig->length_secret_key);
     fread(priv_key.data(), 1, priv_key.size(), fp);
     fclose(fp);
@@ -93,18 +99,21 @@ void load_server_mldsa_key(std::vector<uint8_t>& priv_key) {
     OQS_SIG_free(sig);
 }
 
-void load_server_ecdsa_key(EVP_PKEY* &priv_key) {
-    FILE* fp = fopen("server_ecdsa_key.pem", "r");
-    if (!fp) throw std::runtime_error("Failed to open server ECDSA private key file");
+void load_server_ecdsa_key(EVP_PKEY *&priv_key)
+{
+    FILE *fp = fopen("server_ecdsa_key.pem", "r");
+    if (!fp)
+        throw std::runtime_error("Failed to open server ECDSA private key file");
     priv_key = PEM_read_PrivateKey(fp, nullptr, nullptr, nullptr);
     fclose(fp);
 }
 // --- Perform ML-KEM Encapsulation ---
 // Uses ML-KEM (algorithm ML_KEM_768) to encapsulate and produce a ciphertext and shared secret.
 // client_mlkem_pk: ML-KEM public key received from the client.
-bool perform_mlkem_encapsulation(const std::vector<uint8_t>& client_mlkem_pk,
-                                 std::vector<uint8_t>& kem_ct,
-                                 std::vector<uint8_t>& shared_mlkem) {
+bool perform_mlkem_encapsulation(const std::vector<uint8_t> &client_mlkem_pk,
+                                 std::vector<uint8_t> &kem_ct,
+                                 std::vector<uint8_t> &shared_mlkem)
+{
     OQS_KEM *kem = OQS_KEM_new(OQS_KEM_alg_ml_kem_768);
     if (!kem)
         throw std::runtime_error("Failed to initialize ML-KEM");
@@ -119,41 +128,47 @@ bool perform_mlkem_encapsulation(const std::vector<uint8_t>& client_mlkem_pk,
 
 // --- Compute ECDHE Shared Secret ---
 // Derives the shared secret using ECDHE with the client's PEM-encoded public key.
-bool compute_ecdh_shared_secret(EVP_PKEY* server_priv,
-                                const std::vector<uint8_t>& client_ecdh_bytes,
-                                std::vector<uint8_t>& shared_ecdh) {
+bool compute_ecdh_shared_secret(EVP_PKEY *server_priv,
+                                const std::vector<uint8_t> &client_ecdh_bytes,
+                                std::vector<uint8_t> &shared_ecdh)
+{
     // Convert client's public key bytes into a PEM string
     std::string client_pem_str(client_ecdh_bytes.begin(), client_ecdh_bytes.end());
     BIO *rbio = BIO_new_mem_buf(client_pem_str.data(), client_pem_str.size());
     EVP_PKEY *client_pub = PEM_read_bio_PUBKEY(rbio, nullptr, nullptr, nullptr);
     BIO_free(rbio);
-    if (!client_pub) {
+    if (!client_pub)
+    {
         std::cout << "[!] Failed to parse client ECDHE public key\n";
         return false;
     }
 
     // Set up the derivation context for ECDH
     EVP_PKEY_CTX *derive_ctx = EVP_PKEY_CTX_new(server_priv, nullptr);
-    if (!derive_ctx) {
+    if (!derive_ctx)
+    {
         EVP_PKEY_free(client_pub);
         throw std::runtime_error("Failed to create ECDH derive context");
     }
     if (EVP_PKEY_derive_init(derive_ctx) <= 0 ||
-        EVP_PKEY_derive_set_peer(derive_ctx, client_pub) <= 0) {
+        EVP_PKEY_derive_set_peer(derive_ctx, client_pub) <= 0)
+    {
         EVP_PKEY_free(client_pub);
         EVP_PKEY_CTX_free(derive_ctx);
         std::cout << "[!] Failed to initialize ECDH derivation\n";
         return false;
     }
     size_t ecdh_len = 0;
-    if (EVP_PKEY_derive(derive_ctx, nullptr, &ecdh_len) <= 0 || ecdh_len == 0) {
+    if (EVP_PKEY_derive(derive_ctx, nullptr, &ecdh_len) <= 0 || ecdh_len == 0)
+    {
         std::cout << "[!] Failed to determine ECDHE shared secret length\n";
         EVP_PKEY_free(client_pub);
         EVP_PKEY_CTX_free(derive_ctx);
         return false;
     }
     shared_ecdh.resize(ecdh_len);
-    if (EVP_PKEY_derive(derive_ctx, shared_ecdh.data(), &ecdh_len) <= 0) {
+    if (EVP_PKEY_derive(derive_ctx, shared_ecdh.data(), &ecdh_len) <= 0)
+    {
         std::cout << "[!] Failed to compute ECDHE shared secret\n";
         EVP_PKEY_free(client_pub);
         EVP_PKEY_CTX_free(derive_ctx);
@@ -168,9 +183,10 @@ bool compute_ecdh_shared_secret(EVP_PKEY* server_priv,
 
 // --- Derive Hybrid Key ---
 // Combines the ML-KEM and ECDHE shared secrets and applies HKDF-SHA256 to derive a symmetric key.
-bool derive_hybrid_key(const std::vector<uint8_t>& shared_mlkem,
-                       const std::vector<uint8_t>& shared_ecdh,
-                       std::vector<uint8_t>& hybrid_key) {
+bool derive_hybrid_key(const std::vector<uint8_t> &shared_mlkem,
+                       const std::vector<uint8_t> &shared_ecdh,
+                       std::vector<uint8_t> &hybrid_key)
+{
     // Concatenate the two shared secrets to form input key material (IKM)
     std::vector<uint8_t> ikm = shared_mlkem;
     ikm.insert(ikm.end(), shared_ecdh.begin(), shared_ecdh.end());
@@ -182,10 +198,10 @@ bool derive_hybrid_key(const std::vector<uint8_t>& shared_mlkem,
     // Construct parameters for HKDF: digest, salt, key, info, and output buffer.
     OSSL_PARAM params[6];
     int i = 0;
-    params[i++] = OSSL_PARAM_construct_utf8_string("digest", const_cast<char*>("SHA256"), 0);
+    params[i++] = OSSL_PARAM_construct_utf8_string("digest", const_cast<char *>("SHA256"), 0);
     params[i++] = OSSL_PARAM_construct_octet_string("salt", nullptr, 0);
-    params[i++] = OSSL_PARAM_construct_octet_string("key", const_cast<uint8_t*>(ikm.data()), ikm.size());
-    params[i++] = OSSL_PARAM_construct_octet_string("info", const_cast<char*>(info_str), info_len);
+    params[i++] = OSSL_PARAM_construct_octet_string("key", const_cast<uint8_t *>(ikm.data()), ikm.size());
+    params[i++] = OSSL_PARAM_construct_octet_string("info", const_cast<char *>(info_str), info_len);
     params[i++] = OSSL_PARAM_construct_octet_string("out", hybrid_key.data(), hybrid_key.size());
     params[i++] = OSSL_PARAM_construct_end();
 
@@ -195,7 +211,8 @@ bool derive_hybrid_key(const std::vector<uint8_t>& shared_mlkem,
         throw std::runtime_error("Failed to fetch HKDF algorithm");
 
     EVP_KDF_CTX *kctx = EVP_KDF_CTX_new(kdf);
-    if (!kctx) {
+    if (!kctx)
+    {
         EVP_KDF_free(kdf);
         throw std::runtime_error("Failed to create HKDF context");
     }
@@ -211,11 +228,12 @@ bool derive_hybrid_key(const std::vector<uint8_t>& shared_mlkem,
 
 // --- AES-256-GCM Encryption ---
 // Encrypts a plaintext string using the symmetric key (derived from the hybrid exchange).
-bool aes_256_gcm_encrypt(const std::vector<uint8_t>& key,
-                         const std::string& plaintext,
-                         std::vector<uint8_t>& ciphertext,
-                         std::vector<uint8_t>& iv,
-                         std::vector<uint8_t>& tag) {
+bool aes_256_gcm_encrypt(const std::vector<uint8_t> &key,
+                         const std::string &plaintext,
+                         std::vector<uint8_t> &ciphertext,
+                         std::vector<uint8_t> &iv,
+                         std::vector<uint8_t> &tag)
+{
     // Generate a random 12-byte IV (recommended for GCM)
     iv.resize(12);
     std::random_device rd;
@@ -236,7 +254,7 @@ bool aes_256_gcm_encrypt(const std::vector<uint8_t>& key,
     ciphertext.resize(plaintext.size());
     int len = 0;
     if (EVP_EncryptUpdate(ctx, ciphertext.data(), &len,
-                          reinterpret_cast<const uint8_t*>(plaintext.data()), plaintext.size()) != 1)
+                          reinterpret_cast<const uint8_t *>(plaintext.data()), plaintext.size()) != 1)
         throw std::runtime_error("Encryption update failed");
 
     int ciphertext_len = len;
@@ -254,15 +272,18 @@ bool aes_256_gcm_encrypt(const std::vector<uint8_t>& key,
     return true;
 }
 
-void gen_sign_mldsa(const std::vector<uint8_t>& server_mldsa_priv_key, const std::vector<uint8_t>& message, std::vector<uint8_t>& signature) {
+void gen_sign_mldsa(const std::vector<uint8_t> &server_mldsa_priv_key, const std::vector<uint8_t> &message, std::vector<uint8_t> &signature)
+{
     OQS_SIG *sig = OQS_SIG_new(OQS_SIG_alg_ml_dsa_65);
-    if (!sig) throw std::runtime_error("Failed to create MLDSA object");
+    if (!sig)
+        throw std::runtime_error("Failed to create MLDSA object");
     signature.resize(sig->length_signature);
     size_t sig_len = 0;
     if (OQS_SIG_sign(sig,
-                    signature.data(), &sig_len,
-                    message.data(), message.size(),
-                    server_mldsa_priv_key.data()) != OQS_SUCCESS) {
+                     signature.data(), &sig_len,
+                     message.data(), message.size(),
+                     server_mldsa_priv_key.data()) != OQS_SUCCESS)
+    {
         throw std::runtime_error("Failed to sign server ECDHE public key");
     }
     signature.resize(sig_len);
@@ -270,9 +291,11 @@ void gen_sign_mldsa(const std::vector<uint8_t>& server_mldsa_priv_key, const std
     OQS_SIG_free(sig);
 }
 
-void gen_sign_ecdsa (EVP_PKEY* privkey, const std::vector<uint8_t>& message, std::vector<uint8_t>& signature) {
-    EVP_MD_CTX* mdctx = EVP_MD_CTX_new();
-    if (!mdctx) throw std::runtime_error("MD context alloc failed");
+void gen_sign_ecdsa(EVP_PKEY *privkey, const std::vector<uint8_t> &message, std::vector<uint8_t> &signature)
+{
+    EVP_MD_CTX *mdctx = EVP_MD_CTX_new();
+    if (!mdctx)
+        throw std::runtime_error("MD context alloc failed");
 
     if (EVP_DigestSignInit(mdctx, nullptr, EVP_sha256(), nullptr, privkey) <= 0)
         throw std::runtime_error("DigestSignInit failed");
@@ -295,10 +318,12 @@ void gen_sign_ecdsa (EVP_PKEY* privkey, const std::vector<uint8_t>& message, std
 // Handles the key exchange request by processing client keys, performing ML-KEM encapsulation,
 // computing the shared ECDHE secret, deriving the hybrid key, and encrypting a message.
 void key_exchange_handler(const httplib::Request &req, httplib::Response &res,
-                          EVP_PKEY *server_ecdh_priv, EVP_PKEY *server_ecdsa_priv, const std::vector<uint8_t>& server_ecdh_pub_pem, const std::vector<uint8_t>& server_mldsa_priv_key) {
+                          EVP_PKEY *server_ecdh_priv, EVP_PKEY *server_ecdsa_priv, const std::vector<uint8_t> &server_ecdh_pub_pem, const std::vector<uint8_t> &server_mldsa_priv_key)
+{
     std::cout << "-------------------------------\n";
     std::cout << "[+] Received /key_exchange request\n";
-    try {
+    try
+    {
         // Parse client JSON and decode the Base64-enserver_ecdh_pub_pemcoded ML-KEM and ECDHE public keys.
         json j = json::parse(req.body);
         std::vector<uint8_t> client_mlkem_pk = b64_decode(j["mlkem_public_key"].get<std::string>());
@@ -311,7 +336,8 @@ void key_exchange_handler(const httplib::Request &req, httplib::Response &res,
 
         // Compute the shared secret using ECDHE
         std::vector<uint8_t> shared_ecdh;
-        if (!compute_ecdh_shared_secret(server_ecdh_priv, client_ecdh_bytes, shared_ecdh)) {
+        if (!compute_ecdh_shared_secret(server_ecdh_priv, client_ecdh_bytes, shared_ecdh))
+        {
             res.status = 500;
             res.set_content("ECDH shared secret computation failed", "text/plain");
             return;
@@ -333,36 +359,36 @@ void key_exchange_handler(const httplib::Request &req, httplib::Response &res,
             {"server_ecdh_public_key", b64_encode(server_ecdh_pub_pem)},
             {"mldsa_signature", b64_encode(mldsa_signature)},
             {"ecdsa_signature", b64_encode(ecdsa_signature)},
-            {"key",         b64_encode(kem_ct)},
-            {"ciphertext",  b64_encode(ciphertext)},
-            {"iv",          b64_encode(iv)},
-            {"tag",         b64_encode(tag)}
-        };
+            {"key", b64_encode(kem_ct)},
+            {"ciphertext", b64_encode(ciphertext)},
+            {"iv", b64_encode(iv)},
+            {"tag", b64_encode(tag)}};
         res.set_content(rsp.dump(), "application/json");
         std::cout << "[+] Response sent\n";
     }
-    catch (std::exception &e) {
+    catch (std::exception &e)
+    {
         std::cerr << "[!] Exception in key_exchange_handler: " << e.what() << "\n";
         res.status = 500;
         res.set_content("Internal Server Error", "text/plain");
     }
 }
 
-int main() {
-    try {
+int main()
+{
+    try
+    {
         std::cout << "[+] Server starting\n";
         // Generate ECDHE keypair and obtain the PEM-encoded public key for transmission.
         std::vector<uint8_t> server_ecdh_pub_pem;
         std::vector<uint8_t> server_mldsa_priv_key;
-        EVP_PKEY* server_ecdh_priv = generate_server_ecdh_keypair(server_ecdh_pub_pem);
-        EVP_PKEY* server_ecdsa_priv = nullptr;
+        EVP_PKEY *server_ecdh_priv = generate_server_ecdh_keypair(server_ecdh_pub_pem);
+        EVP_PKEY *server_ecdsa_priv = nullptr;
         load_server_mldsa_key(server_mldsa_priv_key);
-        load_server_ecdsa_key(server_ecdsa_priv)
-        ;
+        load_server_ecdsa_key(server_ecdsa_priv);
         httplib::Server svr;
-        svr.Post("/key_exchange", [&](const httplib::Request& req, httplib::Response& res) {
-            key_exchange_handler(req, res, server_ecdh_priv, server_ecdsa_priv, server_ecdh_pub_pem, server_mldsa_priv_key);
-        });
+        svr.Post("/key_exchange", [&](const httplib::Request &req, httplib::Response &res)
+                 { key_exchange_handler(req, res, server_ecdh_priv, server_ecdsa_priv, server_ecdh_pub_pem, server_mldsa_priv_key); });
 
         std::cout << "[+] Listening on 0.0.0.0:5000\n";
         svr.listen("0.0.0.0", 5000);
@@ -370,7 +396,8 @@ int main() {
         EVP_PKEY_free(server_ecdh_priv);
         std::cout << "[+] Server shutting down\n";
     }
-    catch (std::exception &e) {
+    catch (std::exception &e)
+    {
         std::cerr << "[!] Fatal error: " << e.what() << "\n";
         return 1;
     }
